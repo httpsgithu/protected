@@ -214,8 +214,12 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	}
 	conn.socketFd = socketFd
 	defer conn.cleanup()
+
 	// Actually protect the underlying socket here
-	p.protect(conn.socketFd)
+	err = p.protect(conn.socketFd)
+	if err != nil {
+		return nil, errors.New("Unable to protect socket to %v: %v", addr, err)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -224,7 +228,10 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	}
 
 	// Actually connect the underlying socket
-	conn.connectSocket()
+	err = conn.connectSocket()
+	if err != nil {
+		return nil, errors.New("Unable to connect socket to %v: %v", addr, err)
+	}
 
 	select {
 	case <-ctx.Done():
