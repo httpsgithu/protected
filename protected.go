@@ -21,12 +21,12 @@ var (
 )
 
 const (
-	defaultDNSServer = "8.8.4.4"
-	connectTimeOut   = 15 * time.Second
-	readDeadline     = 15 * time.Second
-	writeDeadline    = 15 * time.Second
-	socketError      = -1
-	dnsPort          = 53
+	dnsServer      = "127.0.0.1"
+	connectTimeOut = 15 * time.Second
+	readDeadline   = 15 * time.Second
+	writeDeadline  = 15 * time.Second
+	socketError    = -1
+	dnsPort        = 7300
 )
 
 type Protect func(fileDescriptor int) error
@@ -41,15 +41,11 @@ type ProtectedConn struct {
 }
 
 type Protector struct {
-	protect   Protect
-	dnsServer string
+	protect Protect
 }
 
-func New(protect Protect, dnsServer string) *Protector {
-	if dnsServer == "" {
-		dnsServer = defaultDNSServer
-	}
-	return &Protector{protect, dnsServer}
+func New(protect Protect) *Protector {
+	return &Protector{protect}
 }
 
 // Resolve resolves the given address using a DNS lookup on a UDP socket
@@ -88,7 +84,7 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 		return nil, errors.New("Could not bind socket to system device: %v", err)
 	}
 
-	IPAddr = net.ParseIP(p.dnsServer)
+	IPAddr = net.ParseIP(dnsServer)
 	if IPAddr == nil {
 		return nil, errors.New("invalid IP address")
 	}
