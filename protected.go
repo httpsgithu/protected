@@ -21,31 +21,36 @@ var (
 )
 
 const (
-	dnsServer      = "127.0.0.1"
 	connectTimeOut = 15 * time.Second
 	readDeadline   = 15 * time.Second
 	writeDeadline  = 15 * time.Second
 	socketError    = -1
-	dnsPort        = 7300
 )
 
+// The actual function to protect a connection. Same signature as
+// https://developer.android.com/reference/android/net/VpnService.html#protect(java.net.Socket)
 type Protect func(fileDescriptor int) error
-
-type ProtectedConn struct {
-	net.Conn
-	mutex    sync.Mutex
-	isClosed bool
-	socketFd int
-	ip       [4]byte
-	port     int
-}
 
 type Protector struct {
 	protect Protect
+	dnsAddr syscall.Sockaddr
+	dns     string
 }
 
-func New(protect Protect) *Protector {
-	return &Protector{protect}
+// New construct a protector from the protect function and DNS server address in host:port format.
+func New(protect Protect, dnsServerAddr string) (*Protector, error) {
+	host, port, err := SplitHostPort(dnsServerAddr)
+	if err != nil {
+		return nil, err
+	}
+	ipAddr := net.ParseIP(host)
+	if ipAddr == nil {
+		return nil, errors.New("invalid IP address")
+	}
+
+	sockAddr := syscall.SockaddrInet4{Port: port}
+	copy(sockAddr.Addr[:], ipAddr.To4())
+	return &Protector{protect, &sockAddr, dnsServerAddr}, nil
 }
 
 // Resolve resolves the given address using a DNS lookup on a UDP socket
@@ -84,16 +89,7 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 		return nil, errors.New("Could not bind socket to system device: %v", err)
 	}
 
-	IPAddr = net.ParseIP(dnsServer)
-	if IPAddr == nil {
-		return nil, errors.New("invalid IP address")
-	}
-
-	var ip [4]byte
-	copy(ip[:], IPAddr.To4())
-	sockAddr := syscall.SockaddrInet4{Addr: ip, Port: dnsPort}
-
-	err = syscall.Connect(socketFd, &sockAddr)
+	err = syscall.Connect(socketFd, p.dnsAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +108,7 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 
 	setQueryTimeouts(fileConn)
 
-	log.Debugf("performing dns lookup...!!")
+	log.Debugf("lookup %s via %s", host, p.dns)
 	result, err := dnsLookup(host, fileConn)
 	if err != nil {
 		log.Errorf("Error doing DNS resolution: %v", err)
@@ -169,7 +165,7 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 // dialContext checks if context has been done between each phase to avoid
 // unnecessary work, but doesn't support arbitrary cancellation.
 func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr string) (net.Conn, error) {
-	socketType := 0
+	var socketType int
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		socketType = syscall.SOCK_STREAM
@@ -178,19 +174,11 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	default:
 		return nil, errors.New("Unsupported network: %v", network)
 	}
-	host, port, err := SplitHostPort(addr)
+
+	// Try to resolve it
+	tcpAddr, err := p.Resolve(network, addr)
 	if err != nil {
 		return nil, err
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Try to resolve it
-		addr, err := p.Resolve(network, addr)
-		if err != nil {
-			return nil, err
-		}
-		ip = addr.IP
 	}
 
 	select {
@@ -199,16 +187,13 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	default:
 	}
 
-	conn := &ProtectedConn{
-		port: port,
-	}
-	copy(conn.ip[:], ip.To4())
-
+	sockAddr := syscall.SockaddrInet4{Port: tcpAddr.Port}
+	copy(sockAddr.Addr[:], tcpAddr.IP.To4())
 	socketFd, err := syscall.Socket(syscall.AF_INET, socketType, 0)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
-	conn.socketFd = socketFd
+	conn := &protectedConn{sockAddr: &sockAddr, socketFd: socketFd}
 	defer conn.cleanup()
 
 	// Actually protect the underlying socket here
@@ -243,16 +228,23 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	return conn.Conn, nil
 }
 
+type protectedConn struct {
+	net.Conn
+	mutex    sync.Mutex
+	isClosed bool
+	socketFd int
+	sockAddr syscall.Sockaddr
+}
+
 // connectSocket makes the connection to the given IP address port
 // for the given socket fd
-func (conn *ProtectedConn) connectSocket() error {
-	sockAddr := syscall.SockaddrInet4{Addr: conn.ip, Port: conn.port}
+func (conn *protectedConn) connectSocket() error {
 	errCh := make(chan error, 2)
 	time.AfterFunc(connectTimeOut, func() {
 		errCh <- errors.New("connect timeout")
 	})
 	go func() {
-		errCh <- syscall.Connect(conn.socketFd, &sockAddr)
+		errCh <- syscall.Connect(conn.socketFd, conn.sockAddr)
 	}()
 	err := <-errCh
 	return err
@@ -260,7 +252,7 @@ func (conn *ProtectedConn) connectSocket() error {
 
 // converts the protected connection specified by
 // socket fd to a net.Conn
-func (conn *ProtectedConn) convert() error {
+func (conn *protectedConn) convert() error {
 	conn.mutex.Lock()
 	file := os.NewFile(uintptr(conn.socketFd), "")
 	// dup the fd and return a copy
@@ -280,7 +272,7 @@ func (conn *ProtectedConn) convert() error {
 // cleanup is run whenever we encounter a socket error
 // we use a mutex since this connection is active in a variety
 // of goroutines and to prevent any possible race conditions
-func (conn *ProtectedConn) cleanup() {
+func (conn *protectedConn) cleanup() {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
@@ -291,7 +283,7 @@ func (conn *ProtectedConn) cleanup() {
 }
 
 // Close is used to destroy a protected connection
-func (conn *ProtectedConn) Close() (err error) {
+func (conn *protectedConn) Close() (err error) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 

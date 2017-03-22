@@ -25,7 +25,7 @@ func (p *testprotector) Protect(fileDescriptor int) error {
 
 func TestConnectIP(t *testing.T) {
 	p := &testprotector{}
-	pt := New(p.Protect, "8.8.8.8")
+	pt, _ := New(p.Protect, "8.8.8.8:53")
 	client := &http.Client{
 		Transport: &http.Transport{
 			Dial: func(netw, addr string) (net.Conn, error) {
@@ -46,7 +46,7 @@ func TestConnectIP(t *testing.T) {
 
 func TestConnectHost(t *testing.T) {
 	p := &testprotector{}
-	pt := New(p.Protect, "8.8.8.8")
+	pt, _ := New(p.Protect, "8.8.8.8:53")
 	client := &http.Client{
 		Transport: &http.Transport{
 			Dial: func(netw, addr string) (net.Conn, error) {
@@ -76,7 +76,7 @@ func TestUDP(t *testing.T) {
 	}()
 
 	p := &testprotector{}
-	pt := New(p.Protect, "8.8.8.8")
+	pt, _ := New(p.Protect, "8.8.8.8:53")
 	conn, err := pt.Dial("udp", l.LocalAddr().String(), 10*time.Second)
 	if !assert.NoError(t, err) {
 		return
