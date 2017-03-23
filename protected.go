@@ -39,7 +39,7 @@ type Protector struct {
 
 // New construct a protector from the protect function and DNS server address in host:port format.
 func New(protect Protect, dnsServerAddr string) (*Protector, error) {
-	host, port, err := SplitHostPort(dnsServerAddr)
+	host, port, err := splitHostPort(dnsServerAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 }
 
 func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAddr, error) {
-	host, port, err := SplitHostPort(addr)
+	host, port, err := splitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -313,18 +313,18 @@ func setQueryTimeouts(c net.Conn) {
 	c.SetWriteDeadline(now.Add(writeDeadline))
 }
 
-// SplitHostAndPort is a wrapper around net.SplitHostPort that also uses strconv
+// splitHostAndPort is a wrapper around net.SplitHostPort that also uses strconv
 // to convert the port to an int
-func SplitHostPort(addr string) (string, int, error) {
+func splitHostPort(addr string) (string, int, error) {
 	host, sPort, err := net.SplitHostPort(addr)
 	if err != nil {
 		log.Errorf("Could not split network address: %v", err)
-		return "", 0, err
+		return "", 0, errors.Wrap(err)
 	}
 	port, err := strconv.Atoi(sPort)
 	if err != nil {
 		log.Errorf("No port number found %v", err)
-		return "", 0, err
+		return "", 0, errors.Wrap(err)
 	}
 	return host, port, nil
 }
