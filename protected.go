@@ -21,10 +21,9 @@ var (
 )
 
 const (
-	connectTimeOut = 15 * time.Second
-	readDeadline   = 15 * time.Second
-	writeDeadline  = 15 * time.Second
-	socketError    = -1
+	readDeadline  = 15 * time.Second
+	writeDeadline = 15 * time.Second
+	socketError   = -1
 )
 
 // The actual function to protect a connection. Same signature as
@@ -146,16 +145,16 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 	chDone := make(chan bool)
 	go func() {
 		conn, err = p.dialContext(op, ctx, network, addr)
-		chDone <- true
-	}()
-	select {
-	case <-ctx.Done():
-		go func() {
-			<-chDone
+		select {
+		case chDone <- true:
+		default:
 			if conn != nil {
 				conn.Close()
 			}
-		}()
+		}
+	}()
+	select {
+	case <-ctx.Done():
 		return nil, op.FailIf(ctx.Err())
 	case <-chDone:
 		return conn, op.FailIf(err)
@@ -185,6 +184,7 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		// continue
 	}
 
 	sockAddr := syscall.SockaddrInet4{Port: tcpAddr.Port}
@@ -206,18 +206,13 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		// continue
 	}
 
 	// Actually connect the underlying socket
-	err = conn.connectSocket()
+	err = conn.connectSocket(ctx)
 	if err != nil {
 		return nil, errors.New("Unable to connect socket to %v: %v", addr, err)
-	}
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
 	}
 
 	// finally, convert the socket fd to a net.Conn
@@ -238,16 +233,17 @@ type protectedConn struct {
 
 // connectSocket makes the connection to the given IP address port
 // for the given socket fd
-func (conn *protectedConn) connectSocket() error {
-	errCh := make(chan error, 2)
-	time.AfterFunc(connectTimeOut, func() {
-		errCh <- errors.New("connect timeout")
-	})
+func (conn *protectedConn) connectSocket(ctx context.Context) error {
+	errCh := make(chan error)
 	go func() {
 		errCh <- syscall.Connect(conn.socketFd, conn.sockAddr)
 	}()
-	err := <-errCh
-	return err
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		return err
+	}
 }
 
 // converts the protected connection specified by
