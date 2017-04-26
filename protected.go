@@ -39,7 +39,7 @@ type Protector struct {
 }
 
 // New construct a protector from the protect function and DNS server IP address.
-func New(protect Protect, dnsServerIP string) (*Protector, error) {
+func New(protect Protect, dnsServerIP string) *Protector {
 	ipAddr := net.ParseIP(dnsServerIP)
 	if ipAddr == nil {
 		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
@@ -48,7 +48,7 @@ func New(protect Protect, dnsServerIP string) (*Protector, error) {
 
 	sockAddr := syscall.SockaddrInet4{Port: dnsPort}
 	copy(sockAddr.Addr[:], ipAddr.To4())
-	return &Protector{protect, &sockAddr, dnsServerIP}, nil
+	return &Protector{protect, &sockAddr, dnsServerIP}
 }
 
 // Resolve resolves the given address using a DNS lookup on a UDP socket
