@@ -17,7 +17,9 @@ import (
 )
 
 var (
-	log = golog.LoggerFor("lantern-android.protected")
+	log              = golog.LoggerFor("lantern-android.protected")
+	defaultDNSServer = "8.8.8.8"
+	dnsPort          = 53
 )
 
 const (
@@ -36,20 +38,17 @@ type Protector struct {
 	dns     string
 }
 
-// New construct a protector from the protect function and DNS server address in host:port format.
-func New(protect Protect, dnsServerAddr string) (*Protector, error) {
-	host, port, err := splitHostPort(dnsServerAddr)
-	if err != nil {
-		return nil, err
-	}
-	ipAddr := net.ParseIP(host)
+// New construct a protector from the protect function and DNS server IP address.
+func New(protect Protect, dnsServerIP string) (*Protector, error) {
+	ipAddr := net.ParseIP(dnsServerIP)
 	if ipAddr == nil {
-		return nil, errors.New("invalid IP address")
+		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
+		dnsServerIP, ipAddr = defaultDNSServer, net.ParseIP(defaultDNSServer)
 	}
 
-	sockAddr := syscall.SockaddrInet4{Port: port}
+	sockAddr := syscall.SockaddrInet4{Port: dnsPort}
 	copy(sockAddr.Addr[:], ipAddr.To4())
-	return &Protector{protect, &sockAddr, dnsServerAddr}, nil
+	return &Protector{protect, &sockAddr, dnsServerIP}, nil
 }
 
 // Resolve resolves the given address using a DNS lookup on a UDP socket
