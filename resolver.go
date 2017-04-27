@@ -1,13 +1,13 @@
 package protected
 
 import (
-	"crypto/rand"
-	"errors"
-	"math/big"
+	"math/rand"
 	"net"
 	"time"
 
 	"github.com/miekg/dns"
+
+	"github.com/getlantern/errors"
 )
 
 type record struct {
@@ -21,25 +21,16 @@ type DnsResponse struct {
 
 // PickRandomIP picks a random IP address from a DNS response
 func (response *DnsResponse) PickRandomIP() (net.IP, error) {
-	length := int64(len(response.records))
+	length := len(response.records)
 	if length < 1 {
 		return nil, errors.New("no IP address")
 	}
-
-	index, err := rand.Int(rand.Reader, big.NewInt(length))
-	if err != nil {
-		return nil, err
-	}
-
-	record := response.records[index.Int64()]
+	record := response.records[rand.Intn(length)]
 	return record.IP, nil
 }
 
 // dnsLookup is used whenever we need to conduct a DNS query over a given TCP connection
 func dnsLookup(addr string, conn net.Conn) (*DnsResponse, error) {
-
-	log.Debugf("Doing a DNS lookup on %s", addr)
-
 	dnsResponse := &DnsResponse{
 		records: make([]record, 0),
 	}
@@ -59,8 +50,7 @@ func dnsLookup(addr string, conn net.Conn) (*DnsResponse, error) {
 
 	response, err := dnsConn.ReadMsg()
 	if err != nil {
-		log.Errorf("Could not process DNS response: %v", err)
-		return nil, err
+		return nil, errors.Wrap(err)
 	}
 
 	// iterate over RRs containing the DNS answer

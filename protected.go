@@ -17,35 +17,38 @@ import (
 )
 
 var (
-	log = golog.LoggerFor("lantern-android.protected")
+	log              = golog.LoggerFor("lantern-android.protected")
+	defaultDNSServer = "8.8.8.8"
+	dnsPort          = 53
 )
 
 const (
-	dnsServer      = "127.0.0.1"
-	connectTimeOut = 15 * time.Second
-	readDeadline   = 15 * time.Second
-	writeDeadline  = 15 * time.Second
-	socketError    = -1
-	dnsPort        = 7300
+	readDeadline  = 15 * time.Second
+	writeDeadline = 15 * time.Second
+	socketError   = -1
 )
 
+// The actual function to protect a connection. Same signature as
+// https://developer.android.com/reference/android/net/VpnService.html#protect(java.net.Socket)
 type Protect func(fileDescriptor int) error
-
-type ProtectedConn struct {
-	net.Conn
-	mutex    sync.Mutex
-	isClosed bool
-	socketFd int
-	ip       [4]byte
-	port     int
-}
 
 type Protector struct {
 	protect Protect
+	dnsAddr syscall.Sockaddr
+	dns     string
 }
 
-func New(protect Protect) *Protector {
-	return &Protector{protect}
+// New construct a protector from the protect function and DNS server IP address.
+func New(protect Protect, dnsServerIP string) *Protector {
+	ipAddr := net.ParseIP(dnsServerIP)
+	if ipAddr == nil {
+		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
+		dnsServerIP, ipAddr = defaultDNSServer, net.ParseIP(defaultDNSServer)
+	}
+
+	sockAddr := syscall.SockaddrInet4{Port: dnsPort}
+	copy(sockAddr.Addr[:], ipAddr.To4())
+	return &Protector{protect, &sockAddr, dnsServerIP}
 }
 
 // Resolve resolves the given address using a DNS lookup on a UDP socket
@@ -58,7 +61,7 @@ func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 }
 
 func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAddr, error) {
-	host, port, err := SplitHostPort(addr)
+	host, port, err := splitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -84,16 +87,7 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 		return nil, errors.New("Could not bind socket to system device: %v", err)
 	}
 
-	IPAddr = net.ParseIP(dnsServer)
-	if IPAddr == nil {
-		return nil, errors.New("invalid IP address")
-	}
-
-	var ip [4]byte
-	copy(ip[:], IPAddr.To4())
-	sockAddr := syscall.SockaddrInet4{Addr: ip, Port: dnsPort}
-
-	err = syscall.Connect(socketFd, &sockAddr)
+	err = syscall.Connect(socketFd, p.dnsAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +106,7 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 
 	setQueryTimeouts(fileConn)
 
-	log.Debugf("performing dns lookup...!!")
+	log.Debugf("lookup %s via %s", host, p.dns)
 	result, err := dnsLookup(host, fileConn)
 	if err != nil {
 		log.Errorf("Error doing DNS resolution: %v", err)
@@ -150,16 +144,16 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 	chDone := make(chan bool)
 	go func() {
 		conn, err = p.dialContext(op, ctx, network, addr)
-		chDone <- true
-	}()
-	select {
-	case <-ctx.Done():
-		go func() {
-			<-chDone
+		select {
+		case chDone <- true:
+		default:
 			if conn != nil {
 				conn.Close()
 			}
-		}()
+		}
+	}()
+	select {
+	case <-ctx.Done():
 		return nil, op.FailIf(ctx.Err())
 	case <-chDone:
 		return conn, op.FailIf(err)
@@ -169,7 +163,7 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 // dialContext checks if context has been done between each phase to avoid
 // unnecessary work, but doesn't support arbitrary cancellation.
 func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr string) (net.Conn, error) {
-	socketType := 0
+	var socketType int
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		socketType = syscall.SOCK_STREAM
@@ -178,37 +172,27 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	default:
 		return nil, errors.New("Unsupported network: %v", network)
 	}
-	host, port, err := SplitHostPort(addr)
+
+	// Try to resolve it
+	tcpAddr, err := p.Resolve(network, addr)
 	if err != nil {
 		return nil, err
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Try to resolve it
-		addr, err := p.Resolve(network, addr)
-		if err != nil {
-			return nil, err
-		}
-		ip = addr.IP
 	}
 
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		// continue
 	}
 
-	conn := &ProtectedConn{
-		port: port,
-	}
-	copy(conn.ip[:], ip.To4())
-
+	sockAddr := syscall.SockaddrInet4{Port: tcpAddr.Port}
+	copy(sockAddr.Addr[:], tcpAddr.IP.To4())
 	socketFd, err := syscall.Socket(syscall.AF_INET, socketType, 0)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
-	conn.socketFd = socketFd
+	conn := &protectedConn{sockAddr: &sockAddr, socketFd: socketFd}
 	defer conn.cleanup()
 
 	// Actually protect the underlying socket here
@@ -221,18 +205,13 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		// continue
 	}
 
 	// Actually connect the underlying socket
-	err = conn.connectSocket()
+	err = conn.connectSocket(ctx)
 	if err != nil {
 		return nil, errors.New("Unable to connect socket to %v: %v", addr, err)
-	}
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
 	}
 
 	// finally, convert the socket fd to a net.Conn
@@ -243,24 +222,32 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	return conn.Conn, nil
 }
 
+type protectedConn struct {
+	net.Conn
+	mutex    sync.Mutex
+	isClosed bool
+	socketFd int
+	sockAddr syscall.Sockaddr
+}
+
 // connectSocket makes the connection to the given IP address port
 // for the given socket fd
-func (conn *ProtectedConn) connectSocket() error {
-	sockAddr := syscall.SockaddrInet4{Addr: conn.ip, Port: conn.port}
-	errCh := make(chan error, 2)
-	time.AfterFunc(connectTimeOut, func() {
-		errCh <- errors.New("connect timeout")
-	})
+func (conn *protectedConn) connectSocket(ctx context.Context) error {
+	errCh := make(chan error)
 	go func() {
-		errCh <- syscall.Connect(conn.socketFd, &sockAddr)
+		errCh <- syscall.Connect(conn.socketFd, conn.sockAddr)
 	}()
-	err := <-errCh
-	return err
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		return err
+	}
 }
 
 // converts the protected connection specified by
 // socket fd to a net.Conn
-func (conn *ProtectedConn) convert() error {
+func (conn *protectedConn) convert() error {
 	conn.mutex.Lock()
 	file := os.NewFile(uintptr(conn.socketFd), "")
 	// dup the fd and return a copy
@@ -280,7 +267,7 @@ func (conn *ProtectedConn) convert() error {
 // cleanup is run whenever we encounter a socket error
 // we use a mutex since this connection is active in a variety
 // of goroutines and to prevent any possible race conditions
-func (conn *ProtectedConn) cleanup() {
+func (conn *protectedConn) cleanup() {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
@@ -291,7 +278,7 @@ func (conn *ProtectedConn) cleanup() {
 }
 
 // Close is used to destroy a protected connection
-func (conn *ProtectedConn) Close() (err error) {
+func (conn *protectedConn) Close() (err error) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
@@ -321,18 +308,18 @@ func setQueryTimeouts(c net.Conn) {
 	c.SetWriteDeadline(now.Add(writeDeadline))
 }
 
-// SplitHostAndPort is a wrapper around net.SplitHostPort that also uses strconv
+// splitHostAndPort is a wrapper around net.SplitHostPort that also uses strconv
 // to convert the port to an int
-func SplitHostPort(addr string) (string, int, error) {
+func splitHostPort(addr string) (string, int, error) {
 	host, sPort, err := net.SplitHostPort(addr)
 	if err != nil {
 		log.Errorf("Could not split network address: %v", err)
-		return "", 0, err
+		return "", 0, errors.Wrap(err)
 	}
 	port, err := strconv.Atoi(sPort)
 	if err != nil {
 		log.Errorf("No port number found %v", err)
-		return "", 0, err
+		return "", 0, errors.Wrap(err)
 	}
 	return host, port, nil
 }
