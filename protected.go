@@ -198,7 +198,8 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	// Actually protect the underlying socket here
 	err = p.protect(conn.socketFd)
 	if err != nil {
-		return nil, errors.New("Unable to protect socket to %v: %v", addr, err)
+		return nil, errors.New("Unable to protect socket to %v with fd %v and type %v: %v",
+			addr, conn.socketFd, socketType, err)
 	}
 
 	select {
