@@ -28,7 +28,7 @@ const (
 	socketError   = -1
 )
 
-// The actual function to protect a connection. Same signature as
+// Protect is the actual function to protect a connection. Same signature as
 // https://developer.android.com/reference/android/net/VpnService.html#protect(java.net.Socket)
 type Protect func(fileDescriptor int) error
 
@@ -198,8 +198,8 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	// Actually protect the underlying socket here
 	err = p.protect(conn.socketFd)
 	if err != nil {
-		return nil, errors.New("Unable to protect socket to %v with fd %v and type %v: %v",
-			addr, conn.socketFd, socketType, err)
+		return nil, errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
+			addr, conn.socketFd, network, err)
 	}
 
 	select {
