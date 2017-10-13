@@ -23,9 +23,10 @@ var (
 )
 
 const (
-	readDeadline  = 15 * time.Second
-	writeDeadline = 15 * time.Second
-	socketError   = -1
+	defaultDialTimeout = 1 * time.Minute
+	readDeadline       = 15 * time.Second
+	writeDeadline      = 15 * time.Second
+	socketError        = -1
 )
 
 // Protect is the actual function to protect a connection. Same signature as
@@ -139,6 +140,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 		return nil, errors.New("Missing address")
 	}
 	addr := raddr.String()
+	ctx, _ := context.WithTimeout(context.Background(), defaultDialTimeout)
 	conn, err := p.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, errors.New("Could not dial address %v", addr)
