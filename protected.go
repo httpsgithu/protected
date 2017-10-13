@@ -130,7 +130,7 @@ func (p *Protector) Dial(network, addr string, timeout time.Duration) (net.Conn,
 	return p.DialContext(ctx, network, addr)
 }
 
-func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDPConn, error) {
+func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn, error) {
 	switch network {
 	case "udp", "udp4", "udp6":
 	default:
@@ -145,7 +145,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 	if err != nil {
 		return nil, errors.New("Could not dial address %v", addr)
 	}
-	return &net.UDPConn{conn}, nil
+	return conn, nil
 }
 
 // DialContext is same as Dial, but accepts a context instead of timeout value.
