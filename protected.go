@@ -163,6 +163,9 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 	chDone := make(chan bool)
 	go func() {
 		conn, err = p.dialContext(op, ctx, network, addr)
+		if err != nil {
+			log.Errorf("Could not dial %s %s: %v", network, addr, err)
+		}
 		select {
 		case chDone <- true:
 		default:
@@ -189,8 +192,12 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	case "udp", "udp4", "udp6":
 		socketType = syscall.SOCK_DGRAM
 	default:
-		return nil, errors.New("Unsupported network: %v", network)
+		err := errors.New("Unsupported network: %v", network)
+		log.Error(err)
+		return nil, err
 	}
+
+	log.Debugf("protected dialing %s %s", network, addr)
 
 	// Try to resolve it
 	tcpAddr, err := p.Resolve(network, addr)
