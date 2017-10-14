@@ -76,7 +76,9 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 	// Create a datagram socket
 	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
-		return nil, errors.New("Error creating socket: %v", err)
+		err = errors.New("Error creating socket: %v", err)
+		log.Error(err)
+		return nil, err
 	}
 	defer syscall.Close(socketFd)
 
@@ -85,11 +87,15 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 	// back to Java for exclusion
 	err = p.protect(socketFd)
 	if err != nil {
-		return nil, errors.New("Could not bind socket to system device: %v", err)
+		err = errors.New("Could not bind socket to system device: %v", err)
+		log.Error(err)
+		return nil, err
 	}
 
 	err = syscall.Connect(socketFd, p.dnsAddr)
 	if err != nil {
+		err = errors.New("Unable to call syscall.Connect: %v", err)
+		log.Error(err)
 		return nil, err
 	}
 
