@@ -136,24 +136,6 @@ func (p *Protector) Dial(network, addr string, timeout time.Duration) (net.Conn,
 	return p.DialContext(ctx, network, addr)
 }
 
-func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn, error) {
-	switch network {
-	case "udp", "udp4", "udp6":
-	default:
-		return nil, errors.New("Unsupported network: %v", network)
-	}
-	if raddr == nil {
-		return nil, errors.New("Missing address")
-	}
-	addr := raddr.String()
-	ctx, _ := context.WithTimeout(context.Background(), defaultDialTimeout)
-	conn, err := p.DialContext(ctx, network, addr)
-	if err != nil {
-		return nil, errors.New("Could not dial address %v", addr)
-	}
-	return conn, nil
-}
-
 // DialContext is same as Dial, but accepts a context instead of timeout value.
 func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	op := ops.Begin("protected-dial").Set("addr", addr)
@@ -186,6 +168,51 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 	case <-chDone:
 		return conn, op.FailIf(err)
 	}
+}
+
+func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn, error) {
+	socket, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	defer syscall.Close(socket)
+	conn := &protectedConn{socketFd: socket}
+	defer conn.cleanup()
+
+	// Actually protect the underlying socket here
+	err = p.protect(conn.socketFd)
+	if err != nil {
+		err = errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
+			addr, conn.socketFd, network, err)
+		log.Error(err)
+		return nil, err
+	}
+
+	path := "protect_path"
+	err = syscall.Connect(socket, &syscall.SockaddrUnix{Name: path})
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	dummy := []byte{1}
+	n, err := syscall.Read(socket, dummy)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	if n != 1 {
+		err = errors.New("Failed to protect fd")
+		log.Error(err)
+		return nil, err
+	}
+	// finally, convert the socket fd to a net.Conn
+	err = conn.convert()
+	if err != nil {
+		return nil, errors.New("Error converting protected connection: %v", err)
+	}
+	return conn.Conn, nil
 }
 
 // dialContext checks if context has been done between each phase to avoid
