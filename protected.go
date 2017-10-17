@@ -61,19 +61,6 @@ func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 	return conn, op.FailIf(err)
 }
 
-func (p *Protector) udpAddr(network string, addr string) (*net.UDPAddr, error) {
-	host, port, err := splitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-
-	IPAddr := net.ParseIP(host)
-	if IPAddr != nil {
-		return &net.UDPAddr{IP: IPAddr, Port: port}, nil
-	}
-	return nil, errors.New("Could not determine address")
-}
-
 func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAddr, error) {
 	host, port, err := splitHostPort(addr)
 	if err != nil {
