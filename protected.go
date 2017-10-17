@@ -184,7 +184,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 	err = p.protect(conn.socketFd)
 	if err != nil {
 		err = errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
-			addr, conn.socketFd, network, err)
+			raddr, conn.socketFd, network, err)
 		log.Error(err)
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 	dummy := []byte{1}
 	n, err := syscall.Read(socket, dummy)
 	if err != nil {
-		log.Println(err)
+		log.Error(err)
 		return nil, err
 	}
 	if n != 1 {
