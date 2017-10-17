@@ -172,7 +172,8 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 
 func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn, error) {
 	log.Debugf("Dialing udp addr %v", raddr)
-	sockAddr := syscall.SockaddrInet4{IP: raddr.IP, Port: raddr.Port}
+	sockAddr := syscall.SockaddrInet4{Port: raddr.Port}
+	copy(sockAddr.Addr[:], raddr.IP.To4())
 
 	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
@@ -185,9 +186,9 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 	err = p.protect(conn.socketFd)
 	if err != nil {
 		return nil, errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
-			addr, conn.socketFd, network, err)
+			raddr, conn.socketFd, network, err)
 	}
-	err = syscall.Connect(socketFd, sockAddr)
+	err = syscall.Connect(socketFd, &sockAddr)
 	if err != nil {
 		log.Error(err)
 		return nil, err
