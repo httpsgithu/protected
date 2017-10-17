@@ -176,7 +176,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 	sockAddr := syscall.SockaddrInet4{Port: raddr.Port}
 	copy(sockAddr.Addr[:], raddr.IP.To4())
 
-	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
