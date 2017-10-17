@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -218,6 +219,10 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	}
 
 	log.Debugf("protected dialing %s %s", network, addr)
+	if strings.Contains(addr, "127.0.0.1") {
+		// don't bother if we're just dialing 127.0.0.1
+		return net.Dial(network, addr)
+	}
 
 	// Try to resolve it
 	tcpAddr, err := p.Resolve(network, addr)
