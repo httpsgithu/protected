@@ -171,6 +171,7 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 }
 
 func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn, error) {
+	log.Debugf("Dialing udp addr %v", raddr)
 	socket, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		log.Error(err)
