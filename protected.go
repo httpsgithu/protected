@@ -61,6 +61,19 @@ func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 	return conn, op.FailIf(err)
 }
 
+func (p *Protector) udpAddr(network string, addr string) (*net.UDPAddr, error) {
+	host, port, err := splitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	IPAddr := net.ParseIP(host)
+	if IPAddr != nil {
+		return &net.UDPAddr{IP: IPAddr, Port: port}, nil
+	}
+	return nil, errors.New("Could not determine address")
+}
+
 func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAddr, error) {
 	host, port, err := splitHostPort(addr)
 	if err != nil {
@@ -172,42 +185,27 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 
 func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn, error) {
 	log.Debugf("Dialing udp addr %v", raddr)
-	socket, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	sockAddr := syscall.SockaddrInet4{IP: raddr.IP, Port: raddr.Port}
+
+	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
-		log.Error(err)
-		return nil, err
+		return nil, errors.New("Could not create socket: %v", err)
 	}
-	defer syscall.Close(socket)
-	conn := &protectedConn{socketFd: socket}
+	conn := &protectedConn{sockAddr: &sockAddr, socketFd: socketFd}
 	defer conn.cleanup()
 
 	// Actually protect the underlying socket here
 	err = p.protect(conn.socketFd)
 	if err != nil {
-		err = errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
-			raddr, conn.socketFd, network, err)
-		log.Error(err)
-		return nil, err
+		return nil, errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
+			addr, conn.socketFd, network, err)
 	}
-
-	path := "protect_path"
-	err = syscall.Connect(socket, &syscall.SockaddrUnix{Name: path})
+	err = syscall.Connect(socketFd, sockAddr)
 	if err != nil {
 		log.Error(err)
 		return nil, err
 	}
 
-	dummy := []byte{1}
-	n, err := syscall.Read(socket, dummy)
-	if err != nil {
-		log.Error(err)
-		return nil, err
-	}
-	if n != 1 {
-		err = errors.New("Failed to protect fd")
-		log.Error(err)
-		return nil, err
-	}
 	// finally, convert the socket fd to a net.Conn
 	err = conn.convert()
 	if err != nil {
