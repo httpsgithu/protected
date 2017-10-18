@@ -179,7 +179,6 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
-	defer syscall.Close(socket)
 	conn := &protectedConn{sockAddr: &sockAddr, socketFd: socketFd}
 	defer conn.cleanup()
 
