@@ -251,7 +251,6 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 		return nil, errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
 			raddr, conn.socketFd, network, err)
 	}
-	path := "protect_path"
 	err = syscall.Connect(socketFd, &syscall.SockaddrUnix{Name: path})
 	if err != nil {
 		log.Error(err)
