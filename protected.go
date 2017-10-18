@@ -175,10 +175,11 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 	sockAddr := syscall.SockaddrInet4{Port: raddr.Port}
 	copy(sockAddr.Addr[:], raddr.IP.To4())
 
-	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	socketFd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
+	defer syscall.Close(socket)
 	conn := &protectedConn{sockAddr: &sockAddr, socketFd: socketFd}
 	defer conn.cleanup()
 
@@ -188,7 +189,8 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (net.Conn
 		return nil, errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
 			raddr, conn.socketFd, network, err)
 	}
-	err = syscall.Connect(socketFd, &sockAddr)
+	path := "protect_path"
+	err = syscall.Connect(socketFd, &syscall.SockaddrUnix{Name: path})
 	if err != nil {
 		log.Error(err)
 		return nil, err
