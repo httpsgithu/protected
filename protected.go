@@ -40,7 +40,7 @@ type Protector struct {
 }
 
 type protectedAddr struct {
-	IP   IP
+	IP   net.IP
 	Port int
 	Zone string // IPv6 scoped addressing zone
 }
