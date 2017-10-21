@@ -95,7 +95,7 @@ func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
 	}
 	conn, err := p.resolve(network, addr)
 	if err != nil {
-		return nil, op.FailIf(err)
+		return nil, err
 	}
 	return conn.UDPAddr(), nil
 }
@@ -243,7 +243,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 	}
 	log.Debugf("Dialing %s %v", network, raddr)
 	// Try to resolve it
-	conn, err := p.Dial(network, addr)
+	conn, err := p.Dial(network, raddr.String())
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 		// continue
 	}
 
-	sockAddr := syscall.SockaddrInet4{Port: rddr.Port}
+	sockAddr := syscall.SockaddrInet4{Port: raddr.Port}
 	copy(sockAddr.Addr[:], raddr.IP.To4())
 	socketFd, err := syscall.Socket(syscall.AF_INET, socketType, 0)
 	if err != nil {
