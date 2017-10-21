@@ -45,12 +45,12 @@ type protectedAddr struct {
 	Zone string // IPv6 scoped addressing zone
 }
 
-func (a *protectedAddr) UDPAddr() *net.UDPAddr {
-	return &net.UDPAddr{IP: addr.IP, addr.Port}
+func (addr *protectedAddr) UDPAddr() *net.UDPAddr {
+	return &net.UDPAddr{IP: addr.IP, Port: addr.Port}
 }
 
 func (addr *protectedAddr) TCPAddr() *net.TCPAddr {
-	return &net.TCPAddr{IP: addr.IP, addr.Port}
+	return &net.TCPAddr{IP: addr.IP, Port: addr.Port}
 }
 
 // New construct a protector from the protect function and DNS server IP address.
@@ -69,14 +69,30 @@ func New(protect Protect, dnsServerIP string) *Protector {
 // Resolve resolves the given address using a DNS lookup on a UDP socket
 // protected by the given Protect function.
 func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		break
+	default:
+		err := errors.New("Resolve: Unsupported network: %s", network)
+		log.Error(err)
+		return nil, err
+	}
 	conn, err := p.resolve(network, addr)
 	if err != nil {
-		return nil, op.FailIf(err)
+		return nil, err
 	}
 	return conn.TCPAddr(), nil
 }
 
 func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
+	switch network {
+	case "udp", "udp4", "udp6":
+		break
+	default:
+		err := errors.New("ResolveUDP: Unsupported network: %s", network)
+		log.Error(err)
+		return nil, err
+	}
 	conn, err := p.resolve(network, addr)
 	if err != nil {
 		return nil, op.FailIf(err)
@@ -93,7 +109,6 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	}
 
 	getProtectedAddr := func(network string, IP net.IP, port int) (*protectedAddr, error) {
-		protectedAddr := &protectedAddr{}
 		switch network {
 		case "tcp", "tcp4", "tcp6":
 		case "udp", "udp4", "udp6":
@@ -170,7 +185,12 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 // - syscall API calls are used to create and bind to the
 //   specified system device (this is primarily
 //   used for Android VpnService routing functionality)
-func (p *Protector) Dial(network, addr string, timeout time.Duration) (net.Conn, error) {
+func (p *Protector) Dial(network, addr string) (net.Conn, error) {
+	ctx, _ := context.WithTimeout(context.Background(), defaultDialTimeout)
+	return p.DialContext(ctx, network, addr)
+}
+
+func (p *Protector) DialWithTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
 	ctx, _ := context.WithTimeout(context.Background(), timeout)
 	return p.DialContext(ctx, network, addr)
 }
@@ -210,7 +230,7 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 }
 
 func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDPConn, error) {
-	op := ops.Begin("protected-dial").Set("addr", raddr.String())
+	op := ops.Begin("protected-dial-udp").Set("addr", raddr.String())
 	defer op.End()
 	switch network {
 	case "udp", "udp4", "udp6":
@@ -223,7 +243,7 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 	}
 	log.Debugf("Dialing %s %v", network, raddr)
 	// Try to resolve it
-	conn, err := p.DialContext(network, addr)
+	conn, err := p.Dial(network, addr)
 	if err != nil {
 		return nil, err
 	}
