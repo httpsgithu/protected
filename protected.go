@@ -71,6 +71,7 @@ func New(protect Protect, dnsServerIP string) *Protector {
 func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
+	case "udp", "udp4", "udp6":
 		break
 	default:
 		err := errors.New("Resolve: Unsupported network: %s", network)
