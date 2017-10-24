@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var testAddr = "example.com:80"
+const (
+	testAddr = "example.com:80"
+)
 
 type testprotector struct {
 	lastProtected int
@@ -29,11 +31,11 @@ func TestConnectIP(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			Dial: func(netw, addr string) (net.Conn, error) {
-				resolved, err := pt.Resolve("tcp", addr)
+				resolved, err := pt.ResolveTCP("tcp", addr)
 				if err != nil {
 					return nil, err
 				}
-				return pt.Dial(netw, resolved.String(), 10*time.Second)
+				return pt.Dial(netw, resolved.String())
 			},
 			ResponseHeaderTimeout: time.Second * 2,
 		},
@@ -50,7 +52,7 @@ func TestConnectHost(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			Dial: func(netw, addr string) (net.Conn, error) {
-				return pt.Dial(netw, addr, 10*time.Second)
+				return pt.Dial(netw, addr)
 			},
 			ResponseHeaderTimeout: time.Second * 2,
 		},
@@ -77,7 +79,7 @@ func TestUDP(t *testing.T) {
 
 	p := &testprotector{}
 	pt := New(p.Protect, "8.8.8.8")
-	conn, err := pt.Dial("udp", l.LocalAddr().String(), 10*time.Second)
+	conn, err := pt.Dial("udp", l.LocalAddr().String())
 	if !assert.NoError(t, err) {
 		return
 	}

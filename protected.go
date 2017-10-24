@@ -23,9 +23,10 @@ var (
 )
 
 const (
-	readDeadline  = 15 * time.Second
-	writeDeadline = 15 * time.Second
-	socketError   = -1
+	defaultDialTimeout = 1 * time.Minute
+	readDeadline       = 15 * time.Second
+	writeDeadline      = 15 * time.Second
+	socketError        = -1
 )
 
 // Protect is the actual function to protect a connection. Same signature as
@@ -35,7 +36,20 @@ type Protect func(fileDescriptor int) error
 type Protector struct {
 	protect Protect
 	dnsAddr syscall.Sockaddr
-	dns     string
+}
+
+type protectedAddr struct {
+	IP   net.IP
+	Port int
+	Zone string // IPv6 scoped addressing zone
+}
+
+func (addr *protectedAddr) UDPAddr() *net.UDPAddr {
+	return &net.UDPAddr{IP: addr.IP, Port: addr.Port}
+}
+
+func (addr *protectedAddr) TCPAddr() *net.TCPAddr {
+	return &net.TCPAddr{IP: addr.IP, Port: addr.Port}
 }
 
 // New construct a protector from the protect function and DNS server IP address.
@@ -43,33 +57,75 @@ func New(protect Protect, dnsServerIP string) *Protector {
 	ipAddr := net.ParseIP(dnsServerIP)
 	if ipAddr == nil {
 		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
-		dnsServerIP, ipAddr = defaultDNSServer, net.ParseIP(defaultDNSServer)
+		ipAddr = net.ParseIP(defaultDNSServer)
 	}
 
-	sockAddr := syscall.SockaddrInet4{Port: dnsPort}
-	copy(sockAddr.Addr[:], ipAddr.To4())
-	return &Protector{protect, &sockAddr, dnsServerIP}
+	dnsAddr := syscall.SockaddrInet4{Port: dnsPort}
+	copy(dnsAddr.Addr[:], ipAddr.To4())
+	return &Protector{protect, &dnsAddr}
 }
 
-// Resolve resolves the given address using a DNS lookup on a UDP socket
+// ResolveTCP resolves the given TCP address using a DNS lookup on a UDP socket
 // protected by the given Protect function.
-func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
+func (p *Protector) ResolveTCP(network string, addr string) (*net.TCPAddr, error) {
 	op := ops.Begin("protected-resolve").Set("addr", addr)
 	defer op.End()
-	conn, err := p.resolve(op, network, addr)
-	return conn, op.FailIf(err)
+
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		break
+	case "":
+		network = "tcp"
+	default:
+		return nil, op.FailIf(log.Errorf("Resolve: Unsupported network: %s", network))
+	}
+	resolved, err := p.resolve(network, addr)
+	if err != nil {
+		return nil, op.FailIf(err)
+	}
+	return resolved.TCPAddr(), nil
 }
 
-func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAddr, error) {
+// ResolveUDP resolves the given UDP address using a DNS lookup on a UDP socket
+// protected by the given Protect function.
+func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
+	op := ops.Begin("protected-resolve").Set("addr", addr)
+	defer op.End()
+
+	switch network {
+	case "udp", "udp4", "udp6":
+		break
+	default:
+		return nil, op.FailIf(log.Errorf("ResolveUDP: Unsupported network: %s", network))
+	}
+	resolved, err := p.resolve(network, addr)
+	if err != nil {
+		return nil, op.FailIf(err)
+	}
+	return resolved.UDPAddr(), nil
+}
+
+func (p *Protector) resolve(network string, addr string) (*protectedAddr, error) {
 	host, port, err := splitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
 
+	getProtectedAddr := func(network string, IP net.IP, port int) (*protectedAddr, error) {
+		switch network {
+		case "tcp", "tcp4", "tcp6":
+		case "udp", "udp4", "udp6":
+			break
+		default:
+			return nil, errors.New("Unsupported network: %v", network)
+		}
+		return &protectedAddr{IP: IP, Port: port}, nil
+	}
+
 	// Check if we already have the IP address
 	IPAddr := net.ParseIP(host)
 	if IPAddr != nil {
-		return &net.TCPAddr{IP: IPAddr, Port: port}, nil
+		return getProtectedAddr(network, IPAddr, port)
 	}
 
 	// Create a datagram socket
@@ -89,7 +145,7 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 
 	err = syscall.Connect(socketFd, p.dnsAddr)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("Unable to call syscall.Connect: %v", err)
 	}
 
 	fd := uintptr(socketFd)
@@ -100,32 +156,36 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*net.TCPAdd
 	// represented by file
 	fileConn, err := net.FileConn(file)
 	if err != nil {
-		log.Errorf("Error returning a copy of the network connection: %v", err)
-		return nil, err
+		return nil, errors.New("Error returning a copy of the network connection: %v", err)
 	}
 
 	setQueryTimeouts(fileConn)
 
-	log.Debugf("lookup %s via %s", host, p.dns)
+	log.Debugf("lookup %s via %s", host, p.dnsAddr)
 	result, err := dnsLookup(host, fileConn)
 	if err != nil {
-		log.Errorf("Error doing DNS resolution: %v", err)
-		return nil, err
+		return nil, errors.New("Error doing DNS resolution: %v", err)
 	}
 	ipAddr, err := result.PickRandomIP()
 	if err != nil {
-		log.Errorf("No IP address available: %v", err)
-		return nil, err
+		return nil, errors.New("No IP address available: %v", err)
 	}
-	return &net.TCPAddr{IP: ipAddr, Port: port}, nil
+	return getProtectedAddr(network, ipAddr, port)
 }
 
 // Dial creates a new protected connection.
 // - syscall API calls are used to create and bind to the
 //   specified system device (this is primarily
 //   used for Android VpnService routing functionality)
-func (p *Protector) Dial(network, addr string, timeout time.Duration) (net.Conn, error) {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+func (p *Protector) Dial(network, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDialTimeout)
+	defer cancel()
+	return p.DialContext(ctx, network, addr)
+}
+
+func (p *Protector) DialTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	return p.DialContext(ctx, network, addr)
 }
 
@@ -144,6 +204,9 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 	chDone := make(chan bool)
 	go func() {
 		conn, err = p.dialContext(op, ctx, network, addr)
+		if err != nil {
+			log.Errorf("Could not dial %s %s: %v", network, addr, err)
+		}
 		select {
 		case chDone <- true:
 		default:
@@ -160,6 +223,25 @@ func (p *Protector) DialContext(ctx context.Context, network, addr string) (net.
 	}
 }
 
+func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDPConn, error) {
+	op := ops.Begin("protected-dial-udp").Set("addr", raddr.String())
+	defer op.End()
+	switch network {
+	case "udp", "udp4", "udp6":
+		// verify we have a udp network
+		break
+	default:
+		return nil, op.FailIf(log.Errorf("Unable to dial %v ; unsupported network: %v", raddr, network))
+	}
+	log.Debugf("Dialing %s %v", network, raddr)
+	// Try to resolve it
+	conn, err := p.Dial(network, raddr.String())
+	if err != nil {
+		return nil, op.FailIf(err)
+	}
+	return conn.(*net.UDPConn), nil
+}
+
 // dialContext checks if context has been done between each phase to avoid
 // unnecessary work, but doesn't support arbitrary cancellation.
 func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr string) (net.Conn, error) {
@@ -170,13 +252,15 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	case "udp", "udp4", "udp6":
 		socketType = syscall.SOCK_DGRAM
 	default:
-		return nil, errors.New("Unsupported network: %v", network)
+		err := errors.New("Unsupported network: %v", network)
+		log.Error(err)
+		return nil, err
 	}
 
 	// Try to resolve it
-	tcpAddr, err := p.Resolve(network, addr)
+	raddr, err := p.resolve(network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 
 	select {
@@ -186,8 +270,8 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 		// continue
 	}
 
-	sockAddr := syscall.SockaddrInet4{Port: tcpAddr.Port}
-	copy(sockAddr.Addr[:], tcpAddr.IP.To4())
+	sockAddr := syscall.SockaddrInet4{Port: raddr.Port}
+	copy(sockAddr.Addr[:], raddr.IP.To4())
 	socketFd, err := syscall.Socket(syscall.AF_INET, socketType, 0)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
@@ -198,8 +282,10 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	// Actually protect the underlying socket here
 	err = p.protect(conn.socketFd)
 	if err != nil {
-		return nil, errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
+		err = errors.New("Unable to protect socket to %v with fd %v and network %v: %v",
 			addr, conn.socketFd, network, err)
+		log.Error(err)
+		return nil, err
 	}
 
 	select {
@@ -209,7 +295,6 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 		// continue
 	}
 
-	// Actually connect the underlying socket
 	err = conn.connectSocket(ctx)
 	if err != nil {
 		return nil, errors.New("Unable to connect socket to %v: %v", addr, err)
