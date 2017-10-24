@@ -18,7 +18,7 @@ import (
 
 var (
 	log              = golog.LoggerFor("lantern-android.protected")
-	defaultDNSServer = "8.8.8.8:53"
+	defaultDNSServer = "8.8.8.8"
 	dnsPort          = 53
 )
 
@@ -68,43 +68,43 @@ func New(protect Protect, dnsServerIP string) *Protector {
 
 // Resolve resolves the given address using a DNS lookup on a UDP socket
 // protected by the given Protect function.
-func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
+func (p *Protector) ResolveTCP(network string, addr string) (*net.TCPAddr, error) {
+	op := ops.Begin("protected-resolve").Set("addr", addr)
+	defer op.End()
+
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		break
 	case "":
 		network = "tcp"
 	default:
-		err := errors.New("Resolve: Unsupported network: %s", network)
-		log.Error(err)
-		return nil, err
+		return nil, op.FailIf(log.Errorf("Resolve: Unsupported network: %s", network))
 	}
-	conn, err := p.resolve(network, addr)
+	resolved, err := p.resolve(network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
-	return conn.TCPAddr(), nil
+	return resolved.TCPAddr(), nil
 }
 
 func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
+	op := ops.Begin("protected-resolve").Set("addr", addr)
+	defer op.End()
+
 	switch network {
 	case "udp", "udp4", "udp6":
 		break
 	default:
-		err := errors.New("ResolveUDP: Unsupported network: %s", network)
-		log.Error(err)
-		return nil, err
+		return nil, op.FailIf(log.Errorf("ResolveUDP: Unsupported network: %s", network))
 	}
-	conn, err := p.resolve(network, addr)
+	resolved, err := p.resolve(network, addr)
 	if err != nil {
 		return nil, err
 	}
-	return conn.UDPAddr(), nil
+	return resolved.UDPAddr(), nil
 }
 
 func (p *Protector) resolve(network string, addr string) (*protectedAddr, error) {
-	op := ops.Begin("protected-resolve").Set("addr", addr)
-	defer op.End()
 	host, port, err := splitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -116,9 +116,7 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 		case "udp", "udp4", "udp6":
 			break
 		default:
-			err := errors.New("Unsupported network: %v", network)
-			log.Error(err)
-			return nil, err
+			return nil, errors.New("Unsupported network: %v", network)
 		}
 		return &protectedAddr{IP: IP, Port: port}, nil
 	}
@@ -132,9 +130,7 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	// Create a datagram socket
 	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
-		err = errors.New("Error creating socket: %v", err)
-		log.Error(err)
-		return nil, err
+		return nil, errors.New("Error creating socket: %v", err)
 	}
 	defer syscall.Close(socketFd)
 
@@ -143,16 +139,12 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	// back to Java for exclusion
 	err = p.protect(socketFd)
 	if err != nil {
-		err = errors.New("Could not bind socket to system device: %v", err)
-		log.Error(err)
-		return nil, err
+		return nil, errors.New("Could not bind socket to system device: %v", err)
 	}
 
 	err = syscall.Connect(socketFd, p.dnsAddr)
 	if err != nil {
-		err = errors.New("Unable to call syscall.Connect: %v", err)
-		log.Error(err)
-		return nil, err
+		return nil, errors.New("Unable to call syscall.Connect: %v", err)
 	}
 
 	fd := uintptr(socketFd)
@@ -163,8 +155,7 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	// represented by file
 	fileConn, err := net.FileConn(file)
 	if err != nil {
-		log.Errorf("Error returning a copy of the network connection: %v", err)
-		return nil, err
+		return nil, errors.New("Error returning a copy of the network connection: %v", err)
 	}
 
 	setQueryTimeouts(fileConn)
@@ -172,13 +163,11 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	log.Debugf("lookup %s via %s", host, p.dns)
 	result, err := dnsLookup(host, fileConn)
 	if err != nil {
-		log.Errorf("Error doing DNS resolution: %v", err)
-		return nil, err
+		return nil, errors.New("Error doing DNS resolution: %v", err)
 	}
 	ipAddr, err := result.PickRandomIP()
 	if err != nil {
-		log.Errorf("No IP address available: %v", err)
-		return nil, err
+		return nil, errors.New("No IP address available: %v", err)
 	}
 	return getProtectedAddr(network, ipAddr, port)
 }
@@ -188,12 +177,14 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 //   specified system device (this is primarily
 //   used for Android VpnService routing functionality)
 func (p *Protector) Dial(network, addr string) (net.Conn, error) {
-	ctx, _ := context.WithTimeout(context.Background(), defaultDialTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDialTimeout)
+	defer cancel()
 	return p.DialContext(ctx, network, addr)
 }
 
-func (p *Protector) DialWithTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+func (p *Protector) DialTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	return p.DialContext(ctx, network, addr)
 }
 
