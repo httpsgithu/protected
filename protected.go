@@ -270,9 +270,9 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	}
 
 	// Try to resolve it
-	raddr, err := p.resolve(network, addr)
+	raddr, err := p.resolve(op, network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 
 	select {
