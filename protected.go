@@ -190,12 +190,14 @@ func (p *Protector) resolve(op ops.Op, network string, addr string) (*protectedA
 //   specified system device (this is primarily
 //   used for Android VpnService routing functionality)
 func (p *Protector) Dial(network, addr string) (net.Conn, error) {
-	ctx, _ := context.WithTimeout(context.Background(), defaultDialTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDialTimeout)
+	defer cancel()
 	return p.DialContext(ctx, network, addr)
 }
 
 func (p *Protector) DialWithTimeout(network, addr string, timeout time.Duration) (net.Conn, error) {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	return p.DialContext(ctx, network, addr)
 }
 
