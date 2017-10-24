@@ -36,7 +36,6 @@ type Protect func(fileDescriptor int) error
 type Protector struct {
 	protect Protect
 	dnsAddr syscall.Sockaddr
-	dns     string
 }
 
 type protectedAddr struct {
@@ -58,15 +57,15 @@ func New(protect Protect, dnsServerIP string) *Protector {
 	ipAddr := net.ParseIP(dnsServerIP)
 	if ipAddr == nil {
 		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
-		dnsServerIP, ipAddr = defaultDNSServer, net.ParseIP(defaultDNSServer)
+		ipAddr = net.ParseIP(defaultDNSServer)
 	}
 
-	sockAddr := syscall.SockaddrInet4{Port: dnsPort}
-	copy(sockAddr.Addr[:], ipAddr.To4())
-	return &Protector{protect, &sockAddr, dnsServerIP}
+	dnsAddr := syscall.SockaddrInet4{Port: dnsPort}
+	copy(dnsAddr.Addr[:], ipAddr.To4())
+	return &Protector{protect, &dnsAddr}
 }
 
-// Resolve resolves the given address using a DNS lookup on a UDP socket
+// ResolveTCP resolves the given TCP address using a DNS lookup on a UDP socket
 // protected by the given Protect function.
 func (p *Protector) ResolveTCP(network string, addr string) (*net.TCPAddr, error) {
 	op := ops.Begin("protected-resolve").Set("addr", addr)
@@ -87,6 +86,8 @@ func (p *Protector) ResolveTCP(network string, addr string) (*net.TCPAddr, error
 	return resolved.TCPAddr(), nil
 }
 
+// ResolveUDP resolves the given UDP address using a DNS lookup on a UDP socket
+// protected by the given Protect function.
 func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
 	op := ops.Begin("protected-resolve").Set("addr", addr)
 	defer op.End()
@@ -160,7 +161,7 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 
 	setQueryTimeouts(fileConn)
 
-	log.Debugf("lookup %s via %s", host, p.dns)
+	log.Debugf("lookup %s via %s", host, p.dnsAddr)
 	result, err := dnsLookup(host, fileConn)
 	if err != nil {
 		return nil, errors.New("Error doing DNS resolution: %v", err)
