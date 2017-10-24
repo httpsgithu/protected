@@ -69,6 +69,8 @@ func New(protect Protect, dnsServerIP string) *Protector {
 // Resolve resolves the given address using a DNS lookup on a UDP socket
 // protected by the given Protect function.
 func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
+	op := ops.Begin("protected-resolve").Set("addr", addr)
+	defer op.End()
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		break
@@ -77,34 +79,34 @@ func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 	default:
 		err := errors.New("Resolve: Unsupported network: %s", network)
 		log.Error(err)
-		return nil, err
+		return nil, op.FailIf(err)
 	}
-	raddr, err := p.resolve(network, addr)
+	raddr, err := p.resolve(op, network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 	return raddr.TCPAddr(), nil
 }
 
 func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
+	op := ops.Begin("protected-resolve-udp").Set("addr", addr)
+	defer op.End()
 	switch network {
 	case "udp", "udp4", "udp6":
 		break
 	default:
 		err := errors.New("ResolveUDP: Unsupported network: %s", network)
 		log.Error(err)
-		return nil, err
+		return nil, op.FailIf(err)
 	}
-	raddr, err := p.resolve(network, addr)
+	raddr, err := p.resolve(op, network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 	return raddr.UDPAddr(), nil
 }
 
-func (p *Protector) resolve(network string, addr string) (*protectedAddr, error) {
-	op := ops.Begin("protected-resolve").Set("addr", addr)
-	defer op.End()
+func (p *Protector) resolve(op ops.Op, network string, addr string) (*protectedAddr, error) {
 	host, port, err := splitHostPort(addr)
 	if err != nil {
 		return nil, err
