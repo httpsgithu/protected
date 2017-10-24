@@ -99,7 +99,7 @@ func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
 	}
 	resolved, err := p.resolve(network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 	return resolved.UDPAddr(), nil
 }
@@ -230,15 +230,13 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 		// verify we have a udp network
 		break
 	default:
-		err := errors.New("Unable to dial %v ; unsupported network: %v", raddr, network)
-		log.Error(err)
-		return nil, err
+		return nil, op.FailIf(log.Errorf("Unable to dial %v ; unsupported network: %v", raddr, network))
 	}
 	log.Debugf("Dialing %s %v", network, raddr)
 	// Try to resolve it
 	conn, err := p.Dial(network, raddr.String())
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 	return conn.(*net.UDPConn), nil
 }
@@ -261,7 +259,7 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	// Try to resolve it
 	raddr, err := p.resolve(network, addr)
 	if err != nil {
-		return nil, err
+		return nil, op.FailIf(err)
 	}
 
 	select {
