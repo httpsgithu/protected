@@ -31,7 +31,7 @@ func TestConnectIP(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			Dial: func(netw, addr string) (net.Conn, error) {
-				resolved, err := pt.Resolve("tcp", addr)
+				resolved, err := pt.ResolveTCP("tcp", addr)
 				if err != nil {
 					return nil, err
 				}
