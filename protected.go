@@ -79,11 +79,11 @@ func (p *Protector) Resolve(network string, addr string) (*net.TCPAddr, error) {
 		log.Error(err)
 		return nil, err
 	}
-	conn, err := p.resolve(network, addr)
+	raddr, err := p.resolve(network, addr)
 	if err != nil {
 		return nil, err
 	}
-	return conn.TCPAddr(), nil
+	return raddr.TCPAddr(), nil
 }
 
 func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
@@ -95,11 +95,11 @@ func (p *Protector) ResolveUDP(network, addr string) (*net.UDPAddr, error) {
 		log.Error(err)
 		return nil, err
 	}
-	conn, err := p.resolve(network, addr)
+	raddr, err := p.resolve(network, addr)
 	if err != nil {
 		return nil, err
 	}
-	return conn.UDPAddr(), nil
+	return raddr.UDPAddr(), nil
 }
 
 func (p *Protector) resolve(network string, addr string) (*protectedAddr, error) {
