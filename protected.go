@@ -233,7 +233,6 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 	default:
 		return nil, op.FailIf(log.Errorf("Unable to dial %v ; unsupported network: %v", raddr, network))
 	}
-	log.Debugf("Dialing %s %v", network, raddr)
 	// Try to resolve it
 	conn, err := p.Dial(network, raddr.String())
 	if err != nil {
