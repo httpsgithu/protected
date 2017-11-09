@@ -4,8 +4,10 @@ package protected
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"sync"
 	"syscall"
@@ -20,6 +22,8 @@ var (
 	log              = golog.LoggerFor("lantern-android.protected")
 	defaultDNSServer = "8.8.8.8"
 	dnsPort          = 53
+
+	ipRegex = regexp.MustCompile(`\[?([^%]+).*\]?`)
 )
 
 const (
@@ -34,8 +38,9 @@ const (
 type Protect func(fileDescriptor int) error
 
 type Protector struct {
-	protect Protect
-	dnsAddr syscall.Sockaddr
+	protect       Protect
+	dnsAddr       syscall.Sockaddr
+	dnsAddrString string
 }
 
 type protectedAddr struct {
@@ -54,15 +59,16 @@ func (addr *protectedAddr) TCPAddr() *net.TCPAddr {
 
 // New construct a protector from the protect function and DNS server IP address.
 func New(protect Protect, dnsServerIP string) *Protector {
-	ipAddr := net.ParseIP(dnsServerIP)
+	ipAddr := parseIP(dnsServerIP)
 	if ipAddr == nil {
 		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
-		ipAddr = net.ParseIP(defaultDNSServer)
+		ipAddr = parseIP(defaultDNSServer)
 	}
 
 	dnsAddr := syscall.SockaddrInet4{Port: dnsPort}
 	copy(dnsAddr.Addr[:], ipAddr.To4())
-	return &Protector{protect, &dnsAddr}
+	dnsAddrString := fmt.Sprintf("%v:%d", ipAddr, dnsPort)
+	return &Protector{protect, &dnsAddr, dnsAddrString}
 }
 
 // ResolveTCP resolves the given TCP address using a DNS lookup on a UDP socket
@@ -123,7 +129,7 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	}
 
 	// Check if we already have the IP address
-	IPAddr := net.ParseIP(host)
+	IPAddr := parseIP(host)
 	if IPAddr != nil {
 		return getProtectedAddr(network, IPAddr, port)
 	}
@@ -161,7 +167,7 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 
 	setQueryTimeouts(fileConn)
 
-	log.Debugf("lookup %s via %s", host, p.dnsAddr)
+	log.Debugf("lookup %v via %v", host, p.dnsAddrString)
 	result, err := dnsLookup(host, fileConn)
 	if err != nil {
 		return nil, errors.New("Error doing DNS resolution: %v", err)
@@ -407,4 +413,20 @@ func splitHostPort(addr string) (string, int, error) {
 		return "", 0, errors.Wrap(err)
 	}
 	return host, port, nil
+}
+
+// parseIP calls net.ParseIP after removing the zone suffix from IPv6 addresses,
+// since net.ParseIP can't handle zone suffixes.
+func parseIP(addr string) net.IP {
+	return net.ParseIP(noZone(addr))
+}
+
+// noZone removes the zone suffix from IPv6 addresses that contain a zone suffix
+// (like fe80::f6f5:e8ff:fe6d:ac6e%wlan0).
+func noZone(addr string) string {
+	ipMatch := ipRegex.FindStringSubmatch(addr)
+	if len(ipMatch) == 2 {
+		return ipMatch[1]
+	}
+	return addr
 }
