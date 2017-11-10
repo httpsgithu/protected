@@ -25,9 +25,24 @@ func (p *testprotector) Protect(fileDescriptor int) error {
 	return nil
 }
 
-func TestConnectIP(t *testing.T) {
+func TestConnectIPv4(t *testing.T) {
+	doTestConnectIP(t, "8.8.8.8")
+}
+
+func TestConnectIPv6(t *testing.T) {
+	dnsServer := "2001:4860:4860::8888"
+	conn, err := net.Dial("udp6", fmt.Sprintf("[%v]:53", dnsServer))
+	if err != nil {
+		log.Debugf("Unable to dial IPv6 DNS server, assuming IPv6 not supported on this network: %v", err)
+		return
+	}
+	conn.Close()
+	doTestConnectIP(t, dnsServer)
+}
+
+func doTestConnectIP(t *testing.T, dnsServer string) {
 	p := &testprotector{}
-	pt := New(p.Protect, "8.8.8.8")
+	pt := New(p.Protect, dnsServer)
 	client := &http.Client{
 		Transport: &http.Transport{
 			Dial: func(netw, addr string) (net.Conn, error) {

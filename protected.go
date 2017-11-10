@@ -41,6 +41,7 @@ type Protector struct {
 	protect       Protect
 	dnsAddr       syscall.Sockaddr
 	dnsAddrString string
+	isIPv6        bool
 }
 
 type protectedAddr struct {
@@ -65,10 +66,18 @@ func New(protect Protect, dnsServerIP string) *Protector {
 		ipAddr = parseIP(defaultDNSServer)
 	}
 
-	dnsAddr := syscall.SockaddrInet4{Port: dnsPort}
-	copy(dnsAddr.Addr[:], ipAddr.To4())
 	dnsAddrString := fmt.Sprintf("%v:%d", ipAddr, dnsPort)
-	return &Protector{protect, &dnsAddr, dnsAddrString}
+	ipv4Addr := ipAddr.To4()
+	if ipv4Addr != nil {
+		log.Debug("Using IPv4 DNS server")
+		dnsAddr := syscall.SockaddrInet4{Port: dnsPort}
+		copy(dnsAddr.Addr[:], ipv4Addr)
+		return &Protector{protect, &dnsAddr, dnsAddrString, false}
+	}
+	log.Debug("Using IPv6 DNS server")
+	dnsAddr := syscall.SockaddrInet6{Port: dnsPort}
+	copy(dnsAddr.Addr[:], ipAddr)
+	return &Protector{protect, &dnsAddr, dnsAddrString, true}
 }
 
 // ResolveTCP resolves the given TCP address using a DNS lookup on a UDP socket
@@ -135,7 +144,11 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 	}
 
 	// Create a datagram socket
-	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	domain := syscall.AF_INET
+	if p.isIPv6 {
+		domain = syscall.AF_INET6
+	}
+	socketFd, err := syscall.Socket(domain, syscall.SOCK_DGRAM, 0)
 	if err != nil {
 		return nil, errors.New("Error creating socket: %v", err)
 	}
