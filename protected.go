@@ -23,7 +23,7 @@ var (
 	defaultDNSServer = "8.8.8.8"
 	dnsPort          = 53
 
-	ipRegex = regexp.MustCompile(`\[?([^%]+).*\]?`)
+	ipRegex = regexp.MustCompile(`\[?([^%\]]+).*\]?`)
 )
 
 const (
