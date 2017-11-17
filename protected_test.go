@@ -133,3 +133,11 @@ func sendTestRequest(client *http.Client, addr string) error {
 	log.Debugf("Successfully processed request to %s", addr)
 	return nil
 }
+
+func TestNoZone(t *testing.T) {
+	assert.Equal(t, "68.105.28.11", noZone("[68.105.28.11]"))
+	assert.Equal(t, "2001:4860:4860::8888", noZone("2001:4860:4860::8888"))
+	assert.Equal(t, "2001:4860:4860::8888", noZone("[2001:4860:4860::8888]"))
+	assert.Equal(t, "2001:4860:4860::8888", noZone("2001:4860:4860::8888%wlan0"))
+	assert.Equal(t, "2001:4860:4860::8888", noZone("[2001:4860:4860::8888%wlan0]"))
+}
