@@ -78,11 +78,12 @@ func TestConnectHost(t *testing.T) {
 	}
 }
 
-func TestUDP(t *testing.T) {
+func TestDialUDP(t *testing.T) {
 	l, err := net.ListenPacket("udp", ":53243")
 	if !assert.NoError(t, err) {
 		return
 	}
+	defer l.Close()
 	go func() {
 		b := make([]byte, 4)
 		_, addr, err := l.ReadFrom(b)
@@ -106,6 +107,43 @@ func TestUDP(t *testing.T) {
 	}
 	b := make([]byte, 4)
 	_, err = conn.Read(b)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Equal(t, "echo", string(b))
+	assert.NotEqual(t, 0, p.lastProtected, "Should have gotten file descriptor from protecting")
+}
+
+func TestListenUDP(t *testing.T) {
+	l, err := net.ListenPacket("udp4", ":53243")
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer l.Close()
+	go func() {
+		b := make([]byte, 4)
+		_, addr, err := l.ReadFrom(b)
+		if !assert.NoError(t, err) {
+			return
+		}
+		l.WriteTo(b, addr)
+	}()
+
+	p := &testprotector{}
+	pt := New(p.Protect, "8.8.8.8")
+
+	conn, err := pt.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer conn.Close()
+
+	_, err = conn.WriteTo([]byte("echo"), l.LocalAddr())
+	if !assert.NoError(t, err) {
+		return
+	}
+	b := make([]byte, 4)
+	_, _, err = conn.ReadFrom(b)
 	if !assert.NoError(t, err) {
 		return
 	}
