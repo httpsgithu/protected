@@ -326,6 +326,60 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	return conn.Conn, nil
 }
 
+func (p *Protector) ListenUDP(network string, laddr *net.UDPAddr) (*net.UDPConn, error) {
+	if laddr == nil {
+		laddr = &net.UDPAddr{}
+	}
+
+	op := ops.Begin("protected-listen-udp").Set("addr", laddr.String())
+	defer op.End()
+
+	c, err := p.listenUDP(network, laddr)
+
+	if err != nil {
+		return nil, op.FailIf(log.Errorf("Unable to listen %v network %v: %v", laddr, network, err))
+	}
+	return c, err
+}
+
+func (p *Protector) listenUDP(network string, laddr *net.UDPAddr) (*net.UDPConn, error) {
+	switch network {
+	case "udp", "udp4", "udp6":
+		// verify we have a udp network
+		break
+	default:
+		return nil, errors.New("Unsupported network: %v", network)
+	}
+
+	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return nil, errors.New("Could not create socket: %v", err)
+	}
+
+	conn := &protectedConn{socketFd: socketFd}
+	defer conn.cleanup()
+
+	err = p.protect(socketFd)
+	if err != nil {
+		return nil, errors.New("Unable to protect socket with fd %v: %v",
+			socketFd, err)
+	}
+
+	sa := &syscall.SockaddrInet4{Port: laddr.Port}
+	copy(sa.Addr[:], laddr.IP.To4())
+	err = syscall.Bind(socketFd, sa)
+	if err != nil {
+		return nil, errors.New("Unable to bind socket with fd %v: %v",
+			socketFd, err)
+	}
+
+	err = conn.convert()
+	if err != nil {
+		return nil, errors.New("Error converting protected connection: %v", err)
+	}
+	return conn.Conn.(*net.UDPConn), nil
+}
+
 type protectedConn struct {
 	net.Conn
 	mutex    sync.Mutex
