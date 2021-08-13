@@ -69,20 +69,18 @@ func (p *Protector) ResolveIPs(host string) ([]net.IP, error) {
 	op := ops.Begin("protected-resolve-ips").Set("addr", host)
 	defer op.End()
 
-	log.Debugf("in ResolveIPs for %v", host)
-
 	// Check if we already have the IP address
 	if ip := parseIP(host); ip != nil {
 		return []net.IP{ip}, nil
 	}
 
 	dnsAddr, dnsAddrString, family, isIPv6 := p.getDNSAddr()
-	log.Debugf("lookup %v via %v, dnsAddr %v, family %v, isIPv6 %v", host, dnsAddrString, dnsAddr, family, isIPv6)
+	log.Debugf("lookup %v via %v", host, dnsAddrString)
 
 	// Create a datagram socket
 	socketFd, err := syscall.Socket(family, syscall.SOCK_DGRAM, syscall.IPPROTO_UDP)
 	if err != nil {
-		return nil, errors.New("Error creating socket: %v", err)
+		return nil, op.FailIf(errors.New("Error creating socket: %v", err))
 	}
 	defer syscall.Close(socketFd)
 
@@ -91,12 +89,12 @@ func (p *Protector) ResolveIPs(host string) ([]net.IP, error) {
 	// back to Java for exclusion
 	err = p.protect(socketFd)
 	if err != nil {
-		return nil, errors.New("Could not bind socket to system device: %v", err)
+		return nil, op.FailIf(errors.New("Could not bind socket to system device: %v", err))
 	}
 
 	err = syscall.Connect(socketFd, dnsAddr)
 	if err != nil {
-		return nil, errors.New("Unable to call syscall.Connect: %v", err)
+		return nil, op.FailIf(errors.New("Unable to call syscall.Connect: %v", err))
 	}
 
 	fd := uintptr(socketFd)
@@ -107,14 +105,13 @@ func (p *Protector) ResolveIPs(host string) ([]net.IP, error) {
 	// represented by file
 	fileConn, err := net.FileConn(file)
 	if err != nil {
-		return nil, errors.New("Error returning a copy of the network connection: %v", err)
+		return nil, op.FailIf(errors.New("Error returning a copy of the network connection: %v", err))
 	}
 
 	setQueryTimeouts(fileConn)
 
 	ips, err := dnsLookup(host, fileConn, isIPv6)
-	log.Debugf("ResolveIPs result for %v: %v: %v", host, ips, err)
-	return ips, err
+	return ips, op.FailIf(err)
 }
 
 // ResolveUDP resolves the given UDP address using a DNS lookup on a UDP socket
@@ -164,10 +161,13 @@ func (p *Protector) resolve(network string, addr string) (*protectedAddr, error)
 
 func (p *Protector) getDNSAddr() (syscall.Sockaddr, string, int, bool) {
 	dnsServerIP := p.dnsServerIP()
-	ipAddr := parseIP(dnsServerIP)
-	if ipAddr == nil {
-		log.Debugf("Invalid DNS server IP %s, default to %s", dnsServerIP, defaultDNSServer)
-		ipAddr = parseIP(defaultDNSServer)
+	// use net.ResolveIPAddr to get an IPAddr struct that contains the zone ID
+	// for IPv6 addresses if one was given. We assume that dnsServerIP is in fact an
+	// IP and not a hostname, which means that ResolveIPAddr won't do any DNS lookups.
+	ipAddr, err := net.ResolveIPAddr("ip", dnsServerIP)
+	if err != nil {
+		log.Debugf("Invalid DNS server IP %v, default to %v: %v", dnsServerIP, defaultDNSServer, err)
+		ipAddr, _ = net.ResolveIPAddr("udp", defaultDNSServer)
 	}
 
 	dnsAddrString := fmt.Sprintf("%v:%d", ipAddr, dnsPort)
@@ -271,7 +271,7 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 		// continue
 	}
 
-	sockAddr, family, _ := socketAddr(raddr.IP, raddr.Port)
+	sockAddr, family, _ := socketAddr(&net.IPAddr{IP: raddr.IP}, raddr.Port)
 	socketFd, err := syscall.Socket(family, socketType, proto)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
@@ -480,16 +480,17 @@ func noZone(addr string) string {
 	return addr
 }
 
-func socketAddr(ip net.IP, port int) (syscall.Sockaddr, int, bool) {
-	ipV4 := ip.To4()
+func socketAddr(ipAddr *net.IPAddr, port int) (syscall.Sockaddr, int, bool) {
+	ipV4 := ipAddr.IP.To4()
 	isIPv4 := ipV4 != nil
 	if isIPv4 {
 		addr := &syscall.SockaddrInet4{Port: port}
 		copy(addr.Addr[:], ipV4)
 		return addr, syscall.AF_INET, true
 	}
-	addr := &syscall.SockaddrInet6{Port: port}
-	copy(addr.Addr[:], ip)
+	_zoneId, _ := strconv.Atoi(ipAddr.Zone)
+	addr := &syscall.SockaddrInet6{Port: port, ZoneId: uint32(_zoneId)}
+	copy(addr.Addr[:], ipAddr.IP)
 	return addr, syscall.AF_INET6, false
 }
 

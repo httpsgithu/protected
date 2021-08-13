@@ -25,6 +25,13 @@ func (p *testprotector) Protect(fileDescriptor int) error {
 	return nil
 }
 
+// func TestResolveNAT64Prefix(t *testing.T) {
+// 	p := &testprotector{}
+// 	pt := New(p.Protect, func() string { return `fe80::415:9c12:3350:c220%2` })
+// 	_, err := pt.ResolveIPs("ipv4only.arpa")
+// 	assert.NoError(t, err)
+// }
+
 func TestConnectIPv4(t *testing.T) {
 	doTestConnectIP(t, "8.8.8.8")
 }
