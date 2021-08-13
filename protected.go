@@ -77,10 +77,10 @@ func (p *Protector) ResolveIPs(host string) ([]net.IP, error) {
 	}
 
 	dnsAddr, dnsAddrString, family, isIPv6 := p.getDNSAddr()
-	log.Debugf("lookup %v via %v, dnsAddr %v, family %v, isIPv6 %v", host, dnsAddrString)
+	log.Debugf("lookup %v via %v, dnsAddr %v, family %v, isIPv6 %v", host, dnsAddrString, dnsAddr, family, isIPv6)
 
 	// Create a datagram socket
-	socketFd, err := syscall.Socket(family, syscall.SOCK_DGRAM, 0)
+	socketFd, err := syscall.Socket(family, syscall.SOCK_DGRAM, syscall.IPPROTO_UDP)
 	if err != nil {
 		return nil, errors.New("Error creating socket: %v", err)
 	}
@@ -244,11 +244,14 @@ func (p *Protector) DialUDP(network string, laddr, raddr *net.UDPAddr) (*net.UDP
 // unnecessary work, but doesn't support arbitrary cancellation.
 func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr string) (net.Conn, error) {
 	var socketType int
+	var proto int
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		socketType = syscall.SOCK_STREAM
+		proto = syscall.IPPROTO_TCP
 	case "udp", "udp4", "udp6":
 		socketType = syscall.SOCK_DGRAM
+		proto = syscall.IPPROTO_UDP
 	default:
 		err := errors.New("Unsupported network: %v", network)
 		log.Error(err)
@@ -269,7 +272,7 @@ func (p *Protector) dialContext(op ops.Op, ctx context.Context, network, addr st
 	}
 
 	sockAddr, family, _ := socketAddr(raddr.IP, raddr.Port)
-	socketFd, err := syscall.Socket(family, socketType, 0)
+	socketFd, err := syscall.Socket(family, socketType, proto)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
@@ -330,7 +333,7 @@ func (p *Protector) listenUDP(network string, laddr *net.UDPAddr) (*net.UDPConn,
 		return nil, errors.New("Unsupported network: %v", network)
 	}
 
-	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	socketFd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, syscall.IPPROTO_UDP)
 	if err != nil {
 		return nil, errors.New("Could not create socket: %v", err)
 	}
