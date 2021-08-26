@@ -36,6 +36,10 @@ func TestConnectIPv4(t *testing.T) {
 	doTestConnectIP(t, "8.8.8.8")
 }
 
+func TestConnectIPv4InvalidDNSServer(t *testing.T) {
+	doTestConnectIP(t, "asdfasdfasdf")
+}
+
 func TestConnectIPv6(t *testing.T) {
 	dnsServer := "2001:4860:4860::8888"
 	conn, err := net.Dial("udp6", fmt.Sprintf("[%v]:53", dnsServer))

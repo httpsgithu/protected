@@ -167,7 +167,7 @@ func (p *Protector) getDNSAddr() (syscall.Sockaddr, string, int, bool) {
 	ipAddr, err := net.ResolveIPAddr("ip", dnsServerIP)
 	if err != nil {
 		log.Debugf("Invalid DNS server IP %v, default to %v: %v", dnsServerIP, defaultDNSServer, err)
-		ipAddr, _ = net.ResolveIPAddr("udp", defaultDNSServer)
+		ipAddr, _ = net.ResolveIPAddr("ip", defaultDNSServer)
 	}
 
 	dnsAddrString := fmt.Sprintf("%v:%d", ipAddr, dnsPort)
