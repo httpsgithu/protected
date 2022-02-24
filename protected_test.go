@@ -90,8 +90,16 @@ func TestConnectHost(t *testing.T) {
 	}
 }
 
-func TestDialUDP(t *testing.T) {
-	l, err := net.ListenPacket("udp4", "127.0.0.1:53243")
+func TestDialUDP4(t *testing.T) {
+	doTestDialUDP(t, "127.0.0.1")
+}
+
+func TestDialUDP6(t *testing.T) {
+	doTestDialUDP(t, "[::1]")
+}
+
+func doTestDialUDP(t *testing.T, localhostIP string) {
+	l, err := net.ListenPacket("udp", localhostIP+":53243")
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -126,8 +134,16 @@ func TestDialUDP(t *testing.T) {
 	assert.NotEqual(t, 0, p.lastProtected, "Should have gotten file descriptor from protecting")
 }
 
-func TestListenUDP(t *testing.T) {
-	l, err := net.ListenPacket("udp4", ":53243")
+func TestListenUDP4(t *testing.T) {
+	doTestListenUDP(t, "127.0.0.1")
+}
+
+func TestListenUDP6(t *testing.T) {
+	doTestListenUDP(t, "[::1]")
+}
+
+func doTestListenUDP(t *testing.T, localhostIP string) {
+	l, err := net.ListenPacket("udp", localhostIP+":53243")
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -144,7 +160,7 @@ func TestListenUDP(t *testing.T) {
 	p := &testprotector{}
 	pt := New(p.Protect, func() string { return "8.8.8.8" })
 
-	conn, err := pt.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	conn, err := pt.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP(localhostIP), Port: 0})
 	if !assert.NoError(t, err) {
 		return
 	}
